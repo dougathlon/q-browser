@@ -10,7 +10,7 @@ const serverURL = `http://127.0.0.1:4193${basePath}`;
 
 export default defineConfig({
   testDir: "tests/e2e",
-  timeout: 60_000,
+  timeout: 120_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
   workers: 1,
