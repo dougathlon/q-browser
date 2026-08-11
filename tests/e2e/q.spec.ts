@@ -32,7 +32,7 @@ test("boots, exposes the five interventions, and keeps debug state separate", as
   await page.keyboard.press("Digit2");
   await page.keyboard.up("Shift");
   await expect(page.locator("[data-debug-value='modifiers']")).toContainText("frenzy");
-  await page.locator("[data-command='same-seed']").click();
+  await page.keyboard.press("r");
   await expect(page.locator("[data-debug-value='run-seed']")).toHaveText("1337");
   await expect(page.locator("[data-debug-value='modifiers']")).toHaveText("none");
   expect(failures).toEqual([]);
