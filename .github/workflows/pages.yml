@@ -1,0 +1,128 @@
+name: Verify and deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: q-browser-pages
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Audit, check, build, and browser-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Audit the public source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forbidden_files="$(git ls-files node_modules dist test-results playwright-report blob-report release '*.zip' '.env' '.env.*' '*.key' '*.pem' | grep -v '^\.env\.example$' || true)"
+          if [[ -n "$forbidden_files" ]]; then
+            echo "Public repository contains generated, credential-bearing, or release-only files:" >&2
+            echo "$forbidden_files" >&2
+            exit 1
+          fi
+
+          if git grep -nEI '(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|/Users/|OneDrive-Personal|CloudStorage|starkdj@|doug\.j\.stark@|Moth|Archaeo)' -- . ':!.github/workflows/pages.yml'; then
+            echo "Publication audit found a credential, private path, private email, or internal service name." >&2
+            exit 1
+          fi
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 11.16.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check and unit-test
+        run: pnpm run check
+
+      - name: Build for the Pages subpath
+        run: pnpm run build:pages
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test the production build
+        run: pnpm run test:e2e:pages
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q-browser-evidence
+          path: |
+            test-results
+            playwright-report
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6.0.0
+
+      - name: Upload verified site
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy verified site
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5.0.0
+
+  live-smoke:
+    name: Verify live Pages files
+    needs: deploy
+    runs-on: ubuntu-latest
+    env:
+      PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+    steps:
+      - name: Fetch the deployed page and assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          site_url="${PAGE_URL%/}/"
+          curl --fail --silent --show-error --location --retry 10 --retry-all-errors --retry-delay 3 \
+            "$site_url" --output index.html
+          grep -q 'name="robots" content="noindex' index.html
+
+          module_path="$(grep -oE 'src="[^"]+\.js"' index.html | head -n 1 | cut -d '"' -f 2)"
+          stylesheet_path="$(grep -oE 'href="[^"]+\.css"' index.html | head -n 1 | cut -d '"' -f 2)"
+          test -n "$module_path"
+          test -n "$stylesheet_path"
+
+          module_url="$(node -e 'console.log(new URL(process.argv[1], process.argv[2]).href)' "$module_path" "$site_url")"
+          stylesheet_url="$(node -e 'console.log(new URL(process.argv[1], process.argv[2]).href)' "$stylesheet_path" "$site_url")"
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "$module_url" --output game.js
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "$stylesheet_url" --output /dev/null
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            "${site_url}THIRD_PARTY_NOTICES.txt" --output /dev/null
+          grep -q 'Q DECISION SCOPE' game.js
