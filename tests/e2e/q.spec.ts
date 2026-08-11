@@ -28,7 +28,9 @@ test("boots, exposes the five interventions, and keeps debug state separate", as
   await expect(page.locator("[data-debug-value='candidates']")).not.toContainText("No decision yet.");
   await page.screenshot({ path: `test-results/${testInfo.project.name}-debug.png`, fullPage: true });
 
-  await page.locator("[data-effect='frenzy']").click();
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("Digit2");
+  await page.keyboard.up("Shift");
   await expect(page.locator("[data-debug-value='modifiers']")).toContainText("frenzy");
   await page.locator("[data-command='same-seed']").click();
   await expect(page.locator("[data-debug-value='run-seed']")).toHaveText("1337");
